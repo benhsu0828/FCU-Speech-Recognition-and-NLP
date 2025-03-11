@@ -35,27 +35,6 @@ def extract_features(file_path, fixed_length):
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)  # 取 13 維 MFCC
     return np.mean(mfcc, axis=1)  # 計算 MFCC 平均值
 
-# def extract_features(file_path, fixed_length):
-#     y, sr = librosa.load(file_path, sr=None)
-#     if len(y) < fixed_length:
-#         y = np.pad(y, (0, fixed_length - len(y)), mode='constant')
-#     else:
-#         y = y[:fixed_length]
-    
-#     y = zero_justification(y)
-    
-#     # 提取 MFCC（時間序列）
-#     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
-#     delta_mfcc = librosa.feature.delta(mfcc)
-#     delta2_mfcc = librosa.feature.delta(mfcc, order=2)
-
-#     # 組合特徵（不再取均值）
-#     features = np.vstack([mfcc, delta_mfcc, delta2_mfcc])
-
-#     return features.flatten()  # 攤平成 1D 陣列
-
-
-
 def find_max_length(data_list):
     max_length = 0
     for file_path, _, _, _ in tqdm(data_list, desc="Finding max length"):
@@ -64,39 +43,31 @@ def find_max_length(data_list):
             max_length = len(y)
     return max_length
 
-def calculate_accuracy(y_pred, y_true, tolerance, label_scaler):
-    # 反標準化預測值和真實值
-    y_pred = label_scaler.inverse_transform(y_pred.detach().numpy())
-    y_true = label_scaler.inverse_transform(y_true.detach().numpy())
+def calculate_accuracy(y_pred, y_true, threshold=0.5):
+    y_pred = y_pred.detach().cpu().numpy()
+    y_true = y_true.detach().cpu().numpy()
 
-    # # 印出前十比 y_pred 和 y_true
-    # print("y_pred: ", y_pred[:10])
-    # print("y_true: ", y_true[:10])
-
-    abs_error = np.abs(y_pred - y_true)  # 計算 |y_pred - y_true| 的絕對誤差
-    correct_predictions = (abs_error <= tolerance).all(axis=1)  # 檢查每一筆數據是否在容許誤差範圍內
-    accuracy = correct_predictions.mean()  # 計算準確率
+    y_pred = (y_pred >= threshold).astype(int)
+    accuracy = (y_pred == y_true).mean()
     return accuracy
 
 if __name__ == "__main__":
+    # 檢查是否有可用的 GPU
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
     # 讀取已經處理好的特徵和標籤
     train_features = np.load('../data/train_features.npy')
     test_features = np.load('../data/test_features.npy')
     train_labels = np.load('../data/train_labels.npy')
     test_labels = np.load('../data/test_labels.npy')
     feature_scaler = np.load('../data/feature_scaler.npy', allow_pickle=True).item()
-    label_scaler = np.load('../data/label_scaler.npy', allow_pickle=True).item()
 
     # 轉換 numpy 陣列為 PyTorch tensor
-    X_train = torch.tensor(train_features, dtype=torch.float32)
-    y_train = torch.tensor(train_labels, dtype=torch.float32)
-    X_test = torch.tensor(test_features, dtype=torch.float32)
-    y_test = torch.tensor(test_labels, dtype=torch.float32)
-
-    # print("X_train shape: ", X_train.shape)
-    # print("y_train shape: ", y_train.shape)
-    # print(feature_scaler.inverse_transform(X_train[:5].detach().numpy()))
-    # print(label_scaler.inverse_transform(y_train[:5].detach().numpy()))
+    X_train = torch.tensor(train_features, dtype=torch.float32).to(device)
+    y_train = torch.tensor(train_labels, dtype=torch.float32).unsqueeze(1).to(device)
+    X_test = torch.tensor(test_features, dtype=torch.float32).to(device)
+    y_test = torch.tensor(test_labels, dtype=torch.float32).unsqueeze(1).to(device)
 
     # 定義 FNN 模型
     class FNN(nn.Module):
@@ -114,7 +85,7 @@ if __name__ == "__main__":
             self.relu3 = nn.ReLU()
             self.dropout3 = nn.Dropout(0.3)  # Dropout 3
 
-            self.fc4 = nn.Linear(64, 2)  # 輸出層
+            self.fc4 = nn.Linear(64, 1)  # 輸出層
 
         def forward(self, x):
             x = self.fc1(x)
@@ -132,23 +103,20 @@ if __name__ == "__main__":
             x = self.fc4(x)  # 輸出層不使用 Dropout
             return x
 
-
-
     # 建立模型
     input_dim = X_train.shape[1]
-    model = FNN(input_dim)
+    model = FNN(input_dim).to(device)
 
     # 設定損失函數和優化器
-    criterion = nn.SmoothL1Loss()  # 使用 SmoothL1Loss 作為損失函數
-    #criterion = nn.MSELoss()  # 使用 MSELoss 作為損失函數
+    criterion = nn.BCEWithLogitsLoss()  # 使用 BCEWithLogitsLoss 作為損失函數
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     # 將訓練資料轉換為 PyTorch tensor 並創建 DataLoader
     train_dataset = TensorDataset(X_train, y_train)
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)  # 調整批次大小
 
     # 訓練模型
-    num_epochs = 100
+    num_epochs = 50
     for epoch in tqdm(range(num_epochs), desc="Training"):
         model.train()
         for batch_X, batch_y in train_loader:
@@ -159,17 +127,20 @@ if __name__ == "__main__":
             optimizer.step()
 
         # 計算準確率
-        tolerance = 1000  # 減小容許誤差範圍
-        accuracy = calculate_accuracy(model(X_train), y_train, tolerance, label_scaler)
-
-        # 印出前十次的訓練結果
-        # if epoch < 20:
-        #     print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}")
-        #     print("預測值: ", label_scaler.inverse_transform(outputs[:5].detach().numpy()))
-        #     print("真實值: ", label_scaler.inverse_transform(y_train[:5].detach().numpy()))
+        accuracy = calculate_accuracy(model(X_train), y_train)
 
         if (epoch+1) % 10 == 0:
             print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}, Accuracy: {accuracy:.4f}")
+
+            # 打印幾筆測試資料和運算結果
+            model.eval()
+            with torch.no_grad():
+                test_outputs = model(X_test[:5])
+                test_predictions = torch.sigmoid(test_outputs).cpu().numpy()
+                test_predictions = (test_predictions >= 0.5).astype(int)  # 將大於或等於0.5的值歸類為1，小於0.5的值歸類為0
+                test_labels_sample = y_test[:5].cpu().numpy()
+                print("Sample Test Predictions: ", test_predictions)
+                print("Sample Test Labels: ", test_labels_sample)
 
     # 保存模型參數
     torch.save(model.state_dict(), '../model/model.pth')
@@ -179,7 +150,7 @@ if __name__ == "__main__":
     with torch.no_grad():
         predictions = model(X_test)
         test_loss = criterion(predictions, y_test)
-        test_accuracy = calculate_accuracy(predictions, y_test, tolerance, label_scaler)
+        test_accuracy = calculate_accuracy(predictions, y_test)
         print(f"測試集 Loss: {test_loss.item():.4f}, Accuracy: {test_accuracy:.4f}")
 
     print("模型訓練與測試完成！")

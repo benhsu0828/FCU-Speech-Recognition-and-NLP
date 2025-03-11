@@ -5,5 +5,7 @@
 conda create --name FCU-SLP python=3.7
 conda activate FCU-SLP
 pip install -r requirements.txt
+pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1+cu117 -f https://download.pytorch.org/whl/torch_stable.html
+
 
 pip freeze > requirements.txt

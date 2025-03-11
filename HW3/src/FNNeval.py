@@ -23,7 +23,7 @@ class FNN(nn.Module):
         self.relu3 = nn.ReLU()
         self.dropout3 = nn.Dropout(0.3)  # Dropout 3
 
-        self.fc4 = nn.Linear(64, 2)  # 輸出層
+        self.fc4 = nn.Linear(64, 1)  # 輸出層
 
     def forward(self, x):
         x = self.fc1(x)
@@ -44,12 +44,11 @@ class FNN(nn.Module):
 # 加載模型參數
 input_dim = 13  # 假設輸入特徵維度為 13
 model = FNN(input_dim)
-model.load_state_dict(torch.load(os.path.join('..', 'model', 'model.pth')))
+model.load_state_dict(torch.load('../model/model.pth'))
 model.eval()
 
 # 加載標準化器
-feature_scaler = np.load(os.path.join('..', 'data', 'feature_scaler.npy'), allow_pickle=True).item()
-label_scaler = np.load(os.path.join('..', 'data', 'label_scaler.npy'), allow_pickle=True).item()
+feature_scaler = np.load('../data/feature_scaler.npy', allow_pickle=True).item()
 
 def zero_justification(raw_data):
     x = np.arange(len(raw_data))  # 確保 x 的長度與 raw_data 相同
@@ -57,35 +56,24 @@ def zero_justification(raw_data):
     coefs_point = np.polyval(coefs, x)
     return raw_data - coefs_point
 
-def extract_features(file_path, fixed_length):
+def extract_features(file_path, frame_length=512, hop_length=192, n_mfcc=13):
     y, sr = librosa.load(file_path, sr=None)  # 讀取音檔
-    if len(y) < fixed_length:
-        y = np.pad(y, (0, fixed_length - len(y)), mode='constant')  # 填充音頻信號到固定長度
-    else:
-        y = y[:fixed_length]  # 截斷音頻信號到固定長度
     y = zero_justification(y)  # 應用 Zero Justification
-    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)  # 取 13 維 MFCC
-    return np.mean(mfcc, axis=1)  # 計算 MFCC 平均值
+    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc, hop_length=hop_length, n_fft=frame_length)  # 取 n_mfcc 維 MFCC
+    mfcc = mfcc.T  # 轉置，使每行代表一個 frame
+    return mfcc, sr
 
 # 針對特定資料進行測試
-def test_model(file_path, fixed_length):
-    # 檢查文件路徑是否存在嵌入的空字符
-    if '\x00' in file_path:
-        raise ValueError("文件路徑中存在嵌入的空字符")
-
-    # 檢查文件是否存在
-    if not os.path.isfile(file_path):
-        raise FileNotFoundError(f"文件未找到: {file_path}")
-
-    features = extract_features(file_path, fixed_length)
-    features = feature_scaler.transform([features])
+def test_model(file_path, frame_length=512, hop_length=192, n_mfcc=13):
+    features, sr = extract_features(file_path, frame_length, hop_length, n_mfcc)
+    features = feature_scaler.transform(features)
     features = torch.tensor(features, dtype=torch.float32)
     
     with torch.no_grad():
-        prediction = model(features)
-        prediction = label_scaler.inverse_transform(prediction.numpy())
-        print("預測值: ", prediction)
-        return prediction
+        predictions = model(features)
+        predictions = torch.sigmoid(predictions).numpy()  # 使用 sigmoid 函數將輸出轉換為概率
+        predictions = (predictions >= 0.5).astype(int).flatten()  # 將概率轉換為 0 或 1，並轉換為 1D 數組
+        return predictions, sr
 
 # 從文件名中提取真實值
 def extract_true_values(file_path):
@@ -95,26 +83,61 @@ def extract_true_values(file_path):
     end = int(parts[2].split('.')[0])
     return np.array([start, end])
 
+# 找到預測為 1 的區間的開始和結束位置
+def find_predicted_ranges(predictions):
+    ranges = []
+    start = None
+    for i, pred in enumerate(predictions):
+        if pred == 1 and start is None:
+            start = i
+        elif pred == 0 and start is not None:
+            ranges.append((start, i - 1))
+            start = None
+    if start is not None:
+        ranges.append((start, len(predictions) - 1))
+    return ranges
+
 # 視覺化預測結果和真實結果
-def visualize_results(file_path, prediction, true_values):
+def visualize_results(file_path, predictions, true_values, frame_length=512, hop_length=192):
     y, sr = librosa.load(file_path, sr=None)
     plt.figure(figsize=(14, 5))
     librosa.display.waveshow(y, sr=sr)
+    
+    # 計算每個 frame 的時間範圍
+    frame_times = np.arange(len(predictions)) * hop_length / sr
+    
+    # 找到預測為 1 的區間的開始和結束位置
+    predicted_ranges = find_predicted_ranges(predictions)
+    
+    # 畫出真實的起氣點和結束點
     plt.vlines(true_values / sr, ymin=y.min(), ymax=y.max(), color='blue', linestyle='--', label='True Values')
-    plt.vlines(prediction / sr, ymin=y.min(), ymax=y.max(), color='red', linestyle='--', label='Predicted Values')
+    
+    # 畫出預測為 1 的區間的開始和結束位置
+    for start, end in predicted_ranges:
+        plt.vlines([frame_times[start], frame_times[end]], ymin=y.min(), ymax=y.max(), color='red', linestyle='--', label='Predicted Values')
+    
+
+    # 打印真實的起氣點和結束點
+    print(f"True Values (start, end): {true_values / sr}")
+    
+    # 打印預測的起氣點和結束點
+    predicted_times = [(frame_times[start], frame_times[end]) for start, end in predicted_ranges]
+    print(f"Predicted Values (start, end): {predicted_times}")
+    
     plt.xlabel('Time (seconds)')
     plt.ylabel('Amplitude')
     plt.title('Waveform with True and Predicted Values')
     plt.legend()
     plt.show()
+    
+    
 
 # 測試特定資料
-test_file_path = os.path.join('..', 'data', 'wavefiles-all', '9862206', '0a_7547_14976.wav')  # 替換為你想要測試的音頻文件路徑
-fixed_length = 32000  # 根據你的固定長度設置
-prediction = test_model(test_file_path, fixed_length)
+test_file_path = "../data/wavefiles-all/960003_Jens/0b_3791_15371.wav"
+predictions, sr = test_model(test_file_path)
 
 # 從文件名中提取真實值
 true_values = extract_true_values(test_file_path)
 
 # 視覺化結果
-visualize_results(test_file_path, prediction, true_values)
+visualize_results(test_file_path, predictions, true_values)
