@@ -1,0 +1,11 @@
+Please describe your findings along the following directions.
+
+The recognition rate of my program. (我得到的辨識率)
+
+My method (我的方法)
+
+My optimization strategy (我所採用的優化策略)
+
+Error analysis (錯誤分析)
+
+Potential direction for further improvement (未來可能改進的方向)

@@ -32,7 +32,7 @@ def find_max_length(data_list):
 
 if __name__ == "__main__":
     # 設定主目錄
-    main_directory = 'E:/FUC-Speech-Recognition-and-NLP/HW3/data/wavefiles-all'
+    main_directory = '../data/wavefiles-all'
 
     # 遞迴搜尋所有 wav 檔案
     wav_files = glob.glob(os.path.join(main_directory, '**', '*.wav'), recursive=True)
@@ -83,19 +83,19 @@ if __name__ == "__main__":
     test_labels = label_scaler.transform(test_labels)
 
     # 保存特徵和標籤到文件
-    np.save('E:/FUC-Speech-Recognition-and-NLP/HW3/data/train_features.npy', train_features)
-    np.save('E:/FUC-Speech-Recognition-and-NLP/HW3/data/test_features.npy', test_features)
-    np.save('E:/FUC-Speech-Recognition-and-NLP/HW3/data/train_labels.npy', train_labels)
-    np.save('E:/FUC-Speech-Recognition-and-NLP/HW3/data/test_labels.npy', test_labels)
-    np.save('E:/FUC-Speech-Recognition-and-NLP/HW3/data/feature_scaler.npy', feature_scaler)
-    np.save('E:/FUC-Speech-Recognition-and-NLP/HW3/data/label_scaler.npy', label_scaler)
+    np.save('../data/train_features.npy', train_features)
+    np.save('../data/test_features.npy', test_features)
+    np.save('../data/train_labels.npy', train_labels)
+    np.save('../data/test_labels.npy', test_labels)
+    np.save('../data/feature_scaler.npy', feature_scaler)
+    np.save('../data/label_scaler.npy', label_scaler)
 
     # 將分割結果存成 txt 檔 (可選)
-    with open('E:/FUC-Speech-Recognition-and-NLP/HW3/data/train_list.txt', 'w') as train_file:
+    with open('../data/train_list.txt', 'w') as train_file:
         for entry in train_data:
             train_file.write(f"{entry[0]} {entry[1]} {entry[2]} {entry[3]}\n")
 
-    with open('E:/FUC-Speech-Recognition-and-NLP/HW3/data/test_list.txt', 'w') as test_file:
+    with open('../data/test_list.txt', 'w') as test_file:
         for entry in test_data:
             test_file.write(f"{entry[0]} {entry[1]} {entry[2]} {entry[3]}\n")
 

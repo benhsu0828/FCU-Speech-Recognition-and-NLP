@@ -1,9 +1,11 @@
 import torch
 import numpy as np
 import librosa
+import librosa.display
 from sklearn.preprocessing import StandardScaler
 import torch.nn as nn
 import os
+import matplotlib.pyplot as plt
 
 # 定義 FNN 模型
 class FNN(nn.Module):
@@ -11,27 +13,43 @@ class FNN(nn.Module):
         super(FNN, self).__init__()
         self.fc1 = nn.Linear(input_dim, 128)
         self.relu1 = nn.ReLU()
-        self.fc2 = nn.Linear(128, 64)
+        self.dropout1 = nn.Dropout(0.3)  # Dropout 1
+
+        self.fc2 = nn.Linear(128, 128)
         self.relu2 = nn.ReLU()
-        self.fc3 = nn.Linear(64, 2)  # 預測起氣點和結束點
+        self.dropout2 = nn.Dropout(0.3)  # Dropout 2
+
+        self.fc3 = nn.Linear(128, 64)
+        self.relu3 = nn.ReLU()
+        self.dropout3 = nn.Dropout(0.3)  # Dropout 3
+
+        self.fc4 = nn.Linear(64, 2)  # 輸出層
 
     def forward(self, x):
         x = self.fc1(x)
         x = self.relu1(x)
+        x = self.dropout1(x)  # Apply dropout
+
         x = self.fc2(x)
         x = self.relu2(x)
+        x = self.dropout2(x)  # Apply dropout
+
         x = self.fc3(x)
+        x = self.relu3(x)
+        x = self.dropout3(x)  # Apply dropout
+
+        x = self.fc4(x)  # 輸出層不使用 Dropout
         return x
 
 # 加載模型參數
 input_dim = 13  # 假設輸入特徵維度為 13
 model = FNN(input_dim)
-model.load_state_dict(torch.load('model.pth'))
+model.load_state_dict(torch.load(os.path.join('..', 'model', 'model.pth')))
 model.eval()
 
 # 加載標準化器
-feature_scaler = torch.load('feature_scaler.pkl')
-label_scaler = torch.load('label_scaler.pkl')
+feature_scaler = np.load(os.path.join('..', 'data', 'feature_scaler.npy'), allow_pickle=True).item()
+label_scaler = np.load(os.path.join('..', 'data', 'label_scaler.npy'), allow_pickle=True).item()
 
 def zero_justification(raw_data):
     x = np.arange(len(raw_data))  # 確保 x 的長度與 raw_data 相同
@@ -67,8 +85,36 @@ def test_model(file_path, fixed_length):
         prediction = model(features)
         prediction = label_scaler.inverse_transform(prediction.numpy())
         print("預測值: ", prediction)
+        return prediction
+
+# 從文件名中提取真實值
+def extract_true_values(file_path):
+    base_name = os.path.basename(file_path)
+    parts = base_name.split('_')
+    start = int(parts[1])
+    end = int(parts[2].split('.')[0])
+    return np.array([start, end])
+
+# 視覺化預測結果和真實結果
+def visualize_results(file_path, prediction, true_values):
+    y, sr = librosa.load(file_path, sr=None)
+    plt.figure(figsize=(14, 5))
+    librosa.display.waveshow(y, sr=sr)
+    plt.vlines(true_values / sr, ymin=y.min(), ymax=y.max(), color='blue', linestyle='--', label='True Values')
+    plt.vlines(prediction / sr, ymin=y.min(), ymax=y.max(), color='red', linestyle='--', label='Predicted Values')
+    plt.xlabel('Time (seconds)')
+    plt.ylabel('Amplitude')
+    plt.title('Waveform with True and Predicted Values')
+    plt.legend()
+    plt.show()
 
 # 測試特定資料
-test_file_path = 'E:/FUC-Speech-Recognition-and-NLP/HW3/wavefiles-all/M1305359/0a_10463_17664.wav'  # 替換為你想要測試的音頻文件路徑
+test_file_path = os.path.join('..', 'data', 'wavefiles-all', '9862206', '0a_7547_14976.wav')  # 替換為你想要測試的音頻文件路徑
 fixed_length = 32000  # 根據你的固定長度設置
-test_model(test_file_path, fixed_length)
+prediction = test_model(test_file_path, fixed_length)
+
+# 從文件名中提取真實值
+true_values = extract_true_values(test_file_path)
+
+# 視覺化結果
+visualize_results(test_file_path, prediction, true_values)
