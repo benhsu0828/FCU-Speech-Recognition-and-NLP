@@ -1,12 +1,60 @@
 Please describe your findings along the following directions.
 
 The recognition rate of my program. (我得到的辨識率)
+我在測試資料集上得到的MSE loss為0.1205，然後AC為95.68%
 
 My method (我的方法)
-我使用FNN的方式，
+我的方法是使用一個前饋神經網絡（FNN）來辨識一段語音是否正在說話，為一個2類分類任務。具體步驟如下：
+
+資料前處理：
+1. 將一個音檔讀入後，以正則表達式解析檔名以獲取起氣點和結束點
+2. 先判斷最長的音檔為多少sample（後來發現是32000），將長度不夠的音檔都padding到相同長度
+3. 使用librosa讀入音檔，透過上週課程使用的zero Justification先處理一次音檔
+4. 接著使用librosa的mfcc提取出特徵，其中以512個sample當作一個frame，並且overlap設為192個sample，最後只使用13維的MFCC特徵
+5. 然後根據這段frame是否在true label的起氣點與結束點之間，如果是就標記為1，否則，標記為0
+6. 透過sklearn的train_test_split以8:2隨機切分這些frame作為訓練與測試資料
+7. 暫存這些特徵和label為npy檔供給模型做訓練，節省每次都重新切分資料的時間
+
+模型訓練：
+由於使用frame base產生出訓練資料，以至於資料量十分龐大，所以使用CUDA來加速模型的訓練
+模型架構如下，使用 ReLU 激活函數和 Dropout 層來防止過擬合：
+fc1：輸入層數X_train.shape[1] 輸出 128 dim
+    使用ReLu作為activation function
+    dropout 30%的神經元
+
+fc2：輸入 128 輸出 128 dim
+    使用ReLu作為activation function
+    dropout 30%的神經元
+
+fc3：輸入 128 輸出 64 dim
+    使用ReLu作為activation function
+    dropout 30%的神經元
+
+fc4：輸入 64 輸出 1 dim 
+
+1. 從資料前處理完的npy檔讀入訓練資料和測試資料
+2. batch_size = 64 , num_epochs = 50
+3. 使用BCEWithLogitsLoss 作為損失函數，並使用 Adam 優化器進行模型訓練。
+
+數據標準化：使用 StandardScaler 對特徵進行標準化處理，以提高模型的收斂速度和準確性。
+
 
 My optimization strategy (我所採用的優化策略)
+最原始的策略是想要使用
+
+特徵標準化：對特徵進行標準化處理，以提高模型的收斂速度和準確性。
+Dropout：在每個隱藏層後添加 Dropout 層，以防止過擬合。
+Adam 優化器：使用 Adam 優化器進行模型訓練，這是一種自適應學習率的優化算法，能夠在大多數情況下取得較好的效果。
+批次訓練：使用小批次訓練（batch size = 64），以提高訓練效率和模型的泛化能力。
 
 Error analysis (錯誤分析)
+數據不平衡：如果訓練數據中某些類別的樣本數量較少，模型可能會對這些類別的預測不準確。
+特徵選擇：目前只使用了 MFCC 特徵，可能還有其他特徵可以提高模型的準確性。
+過擬合：儘管使用了 Dropout 層，但模型仍可能在訓練數據上過擬合，導致在測試數據上的表現不佳。
 
 Potential direction for further improvement (未來可能改進的方向)
+數據增強：通過數據增強技術（如時間移位、噪聲添加等）來增加訓練數據的多樣性，從而提高模型的泛化能力。
+特徵工程：嘗試使用其他特徵（如 Chroma 特徵、Mel 頻譜等）來進一步提高模型的準確性。
+模型結構：探索更深層次的神經網絡結構或其他模型（如卷積神經網絡 CNN、長短期記憶網絡 LSTM 等）來提高模型的表現。
+超參數調整：通過網格搜索或隨機搜索來調整模型的超參數（如學習率、批次大小等），以找到最佳的參數組合。
+交叉驗證：使用交叉驗證技術來評估模型的性能，從而更準確地估計模型的泛化能力。
