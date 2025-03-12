@@ -6,6 +6,7 @@ from sklearn.preprocessing import StandardScaler
 import torch.nn as nn
 import os
 import matplotlib.pyplot as plt
+import glob
 
 # 定義 FNN 模型
 class FNN(nn.Module):
@@ -41,10 +42,13 @@ class FNN(nn.Module):
         x = self.fc4(x)  # 輸出層不使用 Dropout
         return x
 
+# 檢測是否有可用的 CUDA 設備
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 # 加載模型參數
 input_dim = 13  # 假設輸入特徵維度為 13
-model = FNN(input_dim)
-model.load_state_dict(torch.load('../model/model.pth'))
+model = FNN(input_dim).to(device)
+model.load_state_dict(torch.load('../model/model.pth', map_location=device))
 model.eval()
 
 # 加載標準化器
@@ -67,13 +71,13 @@ def extract_features(file_path, frame_length=512, hop_length=192, n_mfcc=13):
 def test_model(file_path, frame_length=512, hop_length=192, n_mfcc=13):
     features, sr = extract_features(file_path, frame_length, hop_length, n_mfcc)
     features = feature_scaler.transform(features)
-    features = torch.tensor(features, dtype=torch.float32)
+    features = torch.tensor(features, dtype=torch.float32).to(device)
     
     with torch.no_grad():
         predictions = model(features)
-        predictions = torch.sigmoid(predictions).numpy()  # 使用 sigmoid 函數將輸出轉換為概率
+        predictions = torch.sigmoid(predictions).cpu().numpy()  # 使用 sigmoid 函數將輸出轉換為概率
         predictions = (predictions >= 0.5).astype(int).flatten()  # 將概率轉換為 0 或 1，並轉換為 1D 數組
-        return predictions, sr
+        return predictions, sr, hop_length
 
 # 從文件名中提取真實值
 def extract_true_values(file_path):
@@ -97,47 +101,32 @@ def find_predicted_ranges(predictions):
         ranges.append((start, len(predictions) - 1))
     return ranges
 
-# 視覺化預測結果和真實結果
-def visualize_results(file_path, predictions, true_values, frame_length=512, hop_length=192):
-    y, sr = librosa.load(file_path, sr=None)
-    plt.figure(figsize=(14, 5))
-    librosa.display.waveshow(y, sr=sr)
-    
-    # 計算每個 frame 的時間範圍
-    frame_times = np.arange(len(predictions)) * hop_length / sr
-    
-    # 找到預測為 1 的區間的開始和結束位置
-    predicted_ranges = find_predicted_ranges(predictions)
-    
-    # 畫出真實的起氣點和結束點
-    plt.vlines(true_values / sr, ymin=y.min(), ymax=y.max(), color='blue', linestyle='--', label='True Values')
-    
-    # 畫出預測為 1 的區間的開始和結束位置
-    for start, end in predicted_ranges:
-        plt.vlines([frame_times[start], frame_times[end]], ymin=y.min(), ymax=y.max(), color='red', linestyle='--', label='Predicted Values')
-    
+# 計算分數
+def calculate_score(predicted_ranges, true_values, sr, time_diff, hop_length):
+    if len(predicted_ranges) == 0:
+        return float('inf')  # 如果沒有預測到任何區間，返回無窮大
+    predicted_start = predicted_ranges[0][0] * hop_length
+    predicted_end = predicted_ranges[-1][1] * hop_length
+    true_start, true_end = true_values
+    score = np.mean(np.abs([predicted_start, predicted_end] - [true_start, true_end]) < sr * time_diff)
+    return score
 
-    # 打印真實的起氣點和結束點
-    print(f"True Values (start, end): {true_values / sr}")
-    
-    # 打印預測的起氣點和結束點
-    predicted_times = [(frame_times[start], frame_times[end]) for start, end in predicted_ranges]
-    print(f"Predicted Values (start, end): {predicted_times}")
-    
-    plt.xlabel('Time (seconds)')
-    plt.ylabel('Amplitude')
-    plt.title('Waveform with True and Predicted Values')
-    plt.legend()
-    plt.show()
-    
-    
+# 主函數
+def main():
+    wav_files = glob.glob('../data/wavefiles-all/**/*.wav', recursive=True)
+    scores = []
+    time_diff = 0.1  # 設置時間差異閾值
 
-# 測試特定資料
-test_file_path = "../data/wavefiles-all/960003_Jens/0b_3791_15371.wav"
-predictions, sr = test_model(test_file_path)
+    for file_path in wav_files:
+        predictions, sr, hop_length = test_model(file_path)
+        true_values = extract_true_values(file_path)
+        predicted_ranges = find_predicted_ranges(predictions)
+        score = calculate_score(predicted_ranges, true_values, sr, time_diff, hop_length)
+        scores.append(score)
+        print(f"File: {file_path}, Score: {score}")
 
-# 從文件名中提取真實值
-true_values = extract_true_values(test_file_path)
+    final_score = np.mean(scores)
+    print(f"Final Score: {final_score}")
 
-# 視覺化結果
-visualize_results(test_file_path, predictions, true_values)
+if __name__ == "__main__":
+    main()
