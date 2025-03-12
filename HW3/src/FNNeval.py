@@ -7,6 +7,7 @@ import torch.nn as nn
 import os
 import matplotlib.pyplot as plt
 import glob
+from tqdm import tqdm
 
 # 定義 FNN 模型
 class FNN(nn.Module):
@@ -88,42 +89,50 @@ def extract_true_values(file_path):
     return np.array([start, end])
 
 # 找到預測為 1 的區間的開始和結束位置
-def find_predicted_ranges(predictions):
+def find_predicted_ranges(predictions, hop_length):
     ranges = []
     start = None
     for i, pred in enumerate(predictions):
         if pred == 1 and start is None:
-            start = i
+            start = i * hop_length
         elif pred == 0 and start is not None:
-            ranges.append((start, i - 1))
+            ranges.append((start, (i - 1) * hop_length))
             start = None
     if start is not None:
-        ranges.append((start, len(predictions) - 1))
+        ranges.append((start, (len(predictions) - 1) * hop_length))
     return ranges
 
 # 計算分數
-def calculate_score(predicted_ranges, true_values, sr, time_diff, hop_length):
+def calculate_score(predicted_ranges, true_values, sr, time_diff):
     if len(predicted_ranges) == 0:
-        return float('inf')  # 如果沒有預測到任何區間，返回無窮大
-    predicted_start = predicted_ranges[0][0] * hop_length
-    predicted_end = predicted_ranges[-1][1] * hop_length
+        return 0.0  # 如果沒有預測到任何區間，得分為0
+    predicted_start = predicted_ranges[0][0]
+    #如果沒有predicted_end，則predicted_end = predicted_start
+    predicted_end = predicted_ranges[-1][1] if len(predicted_ranges) > 1 else predicted_start
     true_start, true_end = true_values
-    score = np.mean(np.abs([predicted_start, predicted_end] - [true_start, true_end]) < sr * time_diff)
-    return score
+    start_diff = np.abs(predicted_start - true_start) / sr
+    end_diff = np.abs(predicted_end - true_end) / sr
+    if start_diff < time_diff and end_diff < time_diff:
+        return 1.0  # 成功預測出起氣點和結束點，得分為1
+    elif start_diff < time_diff or end_diff < time_diff:
+        return 0.5  # 只預測出其中一個，得分為0.5
+    else:
+        return 0.0  # 都沒預測中，得分為0
 
 # 主函數
 def main():
     wav_files = glob.glob('../data/wavefiles-all/**/*.wav', recursive=True)
     scores = []
-    time_diff = 0.1  # 設置時間差異閾值
+    time_diff = 0.0625  # 設置時間差異閾值
 
-    for file_path in wav_files:
-        predictions, sr, hop_length = test_model(file_path)
-        true_values = extract_true_values(file_path)
-        predicted_ranges = find_predicted_ranges(predictions)
-        score = calculate_score(predicted_ranges, true_values, sr, time_diff, hop_length)
-        scores.append(score)
-        print(f"File: {file_path}, Score: {score}")
+    with open('results.txt', 'w') as f:
+        for file_path in tqdm(wav_files, desc="Processing files"):
+            predictions, sr, hop_length = test_model(file_path)
+            true_values = extract_true_values(file_path)
+            predicted_ranges = find_predicted_ranges(predictions, hop_length)
+            score = calculate_score(predicted_ranges, true_values, sr, time_diff)
+            scores.append(score)
+            f.write(f"File: {file_path},sample rate{sr} ,True Values: {true_values}, Predicted Ranges: {predicted_ranges}, Score: {score}\n")
 
     final_score = np.mean(scores)
     print(f"Final Score: {final_score}")
