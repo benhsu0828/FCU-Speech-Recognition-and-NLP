@@ -8,6 +8,7 @@ import librosa
 from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
+from model import FNN  # 導入模型
 
 # 讀取 train_list.txt 和 test_list.txt
 def load_data_list(file_path):
@@ -69,47 +70,13 @@ if __name__ == "__main__":
     X_test = torch.tensor(test_features, dtype=torch.float32).to(device)
     y_test = torch.tensor(test_labels, dtype=torch.float32).unsqueeze(1).to(device)
 
-    # 定義 FNN 模型
-    class FNN(nn.Module):
-        def __init__(self, input_dim):
-            super(FNN, self).__init__()
-            self.fc1 = nn.Linear(input_dim, 128)
-            self.relu1 = nn.ReLU()
-            self.dropout1 = nn.Dropout(0.3)  # Dropout 1
-
-            self.fc2 = nn.Linear(128, 128)
-            self.relu2 = nn.ReLU()
-            self.dropout2 = nn.Dropout(0.3)  # Dropout 2
-
-            self.fc3 = nn.Linear(128, 64)
-            self.relu3 = nn.ReLU()
-            self.dropout3 = nn.Dropout(0.3)  # Dropout 3
-
-            self.fc4 = nn.Linear(64, 1)  # 輸出層
-
-        def forward(self, x):
-            x = self.fc1(x)
-            x = self.relu1(x)
-            x = self.dropout1(x)  # Apply dropout
-
-            x = self.fc2(x)
-            x = self.relu2(x)
-            x = self.dropout2(x)  # Apply dropout
-
-            x = self.fc3(x)
-            x = self.relu3(x)
-            x = self.dropout3(x)  # Apply dropout
-
-            x = self.fc4(x)  # 輸出層不使用 Dropout
-            return x
-
     # 建立模型
     input_dim = X_train.shape[1]
     model = FNN(input_dim).to(device)
 
     # 設定損失函數和優化器
     criterion = nn.BCEWithLogitsLoss()  # 使用 BCEWithLogitsLoss 作為損失函數
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
     # 將訓練資料轉換為 PyTorch tensor 並創建 DataLoader
     train_dataset = TensorDataset(X_train, y_train)
@@ -117,6 +84,10 @@ if __name__ == "__main__":
 
     # 訓練模型
     num_epochs = 50
+    early_stop_patience = 5  # 早停的耐心值
+    best_loss = float('inf')
+    patience_counter = 0
+
     for epoch in tqdm(range(num_epochs), desc="Training"):
         model.train()
         for batch_X, batch_y in train_loader:
@@ -142,8 +113,22 @@ if __name__ == "__main__":
                 print("Sample Test Predictions: ", test_predictions)
                 print("Sample Test Labels: ", test_labels_sample)
 
-    # 保存模型參數
-    torch.save(model.state_dict(), '../model/model.pth')
+        # 驗證模型
+        model.eval()
+        with torch.no_grad():
+            val_outputs = model(X_test)
+            val_loss = criterion(val_outputs, y_test)
+
+        # 早停機制
+        if val_loss < best_loss:
+            best_loss = val_loss
+            patience_counter = 0
+            torch.save(model.state_dict(), '../model/model.pth')  # 保存最佳模型參數
+        else:
+            patience_counter += 1
+            if patience_counter >= early_stop_patience:
+                print(f"Early stopping at epoch {epoch+1}")
+                break
 
     # 測試模型
     model.eval()
