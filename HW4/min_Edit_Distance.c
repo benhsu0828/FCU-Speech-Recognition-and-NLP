@@ -5,6 +5,9 @@
 #include<time.h>
 
 #define targetString "intensation"
+#define MAX_WORD_LENGTH 50
+#define MAX_WORDS 5
+#define DP_SIZE 20
 
 int min(int a, int b, int c) {
     if (a <= b && a <= c) return a;
@@ -13,10 +16,10 @@ int min(int a, int b, int c) {
 }
 
 typedef struct {
-    char origin_word[100];
-    char new_word[100];
+    char origin_word[MAX_WORD_LENGTH];
+    char new_word[MAX_WORD_LENGTH];
     int cost;
-    int dp[100][100];
+    int dp[DP_SIZE][DP_SIZE];
 } WordCost;
 
 int compare(const void *a, const void *b) {
@@ -44,10 +47,6 @@ void insertChar(char *str, char ch, int pos) {
     }
     // 使用 memmove 將字串向右移動一位
     memmove(str + pos + 1, str + pos, len - pos + 1);
-    // // 將插入位置之後的字符向右移動一位
-    // for (int i = len; i >= pos; i--) {
-    //     str[i + 1] = str[i];
-    // }
     // 插入字元
     str[pos] = ch;
 }
@@ -56,6 +55,20 @@ int findMin(int a, int b, int c){
     if(a <= b && a <= c) return 0;
     if(b <= a && b <= c) return 1;
     return 2;
+}
+
+void initializeDP(int dp[DP_SIZE][DP_SIZE], int n, int m) {
+    for (int i = 0; i <= n; i++) {
+        for (int j = 0; j <= m; j++) {
+            if (i == 0) {
+                dp[i][j] = j;
+            } else if (j == 0) {
+                dp[i][j] = i;
+            } else {
+                dp[i][j] = -1;
+            }
+        }
+    }
 }
 
 // 根據建好的dp查尋最短路徑
@@ -98,13 +111,9 @@ int main(){
         return 0;
     }
     char word[100];
-    WordCost wordCosts[5]; // 只存儲前五個最小編輯距離的單詞
-    for(int k = 0; k < 5; k++) {
-        for(int i = 0; i < 100; i++) {
-            for(int j = 0; j < 100; j++) {
-                wordCosts[k].dp[i][j] = -1;
-            }
-        }
+    WordCost wordCosts[MAX_WORDS]; // 只存儲前五個最小編輯距離的單詞
+    for(int k = 0; k < MAX_WORDS; k++) {
+        initializeDP(wordCosts[k].dp, DP_SIZE, DP_SIZE);
     }
     int wordCount = 0;
     int n = strlen(targetString);
@@ -115,26 +124,17 @@ int main(){
     // 一行一行讀取檔案
     while(fgets(word, 100, fp) != NULL){
         // 去除換行符號
-        word[strlen(word)-1] = '\0';
-        // 計算兩個字串的長度
         int m = strlen(word);
+        word[m-1] = '\0';
         // 存儲結果
         WordCost newWordCost;
-        for (int i = 0; i < 100; i++){
-            for (int j = 0; j < 100; j++){
-                newWordCost.dp[i][j] = -1;
-            }
-        }
+        initializeDP(newWordCost.dp, n, m);
         strcpy(newWordCost.origin_word, word);
         strcpy(newWordCost.new_word, word);
         // 初始化陣列
-        for(int i = 0; i <= n; i++) {
-            for(int j = 0; j <= m; j++) {
-                if(i == 0) {
-                    newWordCost.dp[i][j] = j; // 將 targetString 的前 0 個字符轉換為 word 的前 j 個字符所需的編輯操作數
-                } else if(j == 0) {
-                    newWordCost.dp[i][j] = i; // 將 targetString 的前 i 個字符轉換為 word 的前 0 個字符所需的編輯操作數
-                } else if(targetString[i-1] == word[j-1]) {
+        for(int i = 1; i <= n; i++) {
+            for(int j = 1; j <= m; j++) {
+                if(targetString[i-1] == word[j-1]) {
                     newWordCost.dp[i][j] = newWordCost.dp[i-1][j-1]; // 如果字符相同，則不需要編輯操作
                 } else {
                     newWordCost.dp[i][j] = 1 + min(newWordCost.dp[i-1][j],    // 刪除 cost 1
@@ -147,8 +147,7 @@ int main(){
         insertWordCost(wordCosts, &wordCount, newWordCost);
     }
     // 打印前五個編輯距離最小的句子
-    printf("Top 5 sentences with minimum edit distance:\n");
-    // // 印出全部dp
+    printf("Top 5 sentences with minimum edit distance:\n"); // // 印出全部dp
     // for (int i = n; i >= 0; i--)
     // {
     //    for(int j = strlen(wordCosts[0].origin_word); j >=0 ; j--){
@@ -162,10 +161,10 @@ int main(){
         findPath(&wordCosts[i]);
         printf("Candidate #%d: %s ## MED %d ## OptPath: %s\n",i, wordCosts[i].origin_word, wordCosts[i].cost,wordCosts[i].new_word);
     }
-     // 結束計算時間
-     end = clock();
-     double time_taken = ((double) (end - start)) / CLOCKS_PER_SEC /1000;
-     printf("Time taken: %f ms\n", time_taken);
+    // 結束計算時間
+    end = clock();
+    double time_taken = ((double) (end - start)) * 1000000.0 / CLOCKS_PER_SEC;
+    printf("Time taken: %f us\n", time_taken);
     fclose(fp);
     return 0;
 }
