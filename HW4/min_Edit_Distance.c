@@ -124,8 +124,8 @@ int main(){
     // 一行一行讀取檔案
     while(fgets(word, 100, fp) != NULL){
         // 去除換行符號
-        int m = strlen(word);
-        word[m-1] = '\0';
+        int m = strlen(word) - 1;
+        word[m] = '\0';
         // 存儲結果
         WordCost newWordCost;
         initializeDP(newWordCost.dp, n, m);
@@ -143,11 +143,13 @@ int main(){
                 }
             }
         }
+        // printf("cost: %d\n", newWordCost.dp[n][m]);
         newWordCost.cost = newWordCost.dp[n][m];
         insertWordCost(wordCosts, &wordCount, newWordCost);
     }
     // 打印前五個編輯距離最小的句子
-    printf("Top 5 sentences with minimum edit distance:\n"); // // 印出全部dp
+    printf("Top 5 sentences with minimum edit distance:\n"); 
+    // // 印出全部dp
     // for (int i = n; i >= 0; i--)
     // {
     //    for(int j = strlen(wordCosts[0].origin_word); j >=0 ; j--){
