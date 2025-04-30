@@ -1,79 +1,51 @@
-import os
 import pandas as pd
 import numpy as np
-import librosa
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import classification_report
 from sklearn.preprocessing import LabelEncoder
-from tqdm import tqdm
+from sklearn.metrics import classification_report, accuracy_score
 
-# === Config ===
-CSV_PATH = './data/metadata.csv'
-N_MFCC = 13  # 可調整的特徵數
-SAMPLE_RATE = 16000
+# === Load Preprocessed Data ===
+data = np.load('./data/mfcc_data.npz')
+X = data["features"]  # shape: (samples, n_mfcc)
+y = data["labels"]
+splits = data["splits"]
 
-# === Step 1: Read Metadata ===
-df = pd.read_csv(CSV_PATH)
-
-# === Step 2: Extract MFCC Features ===
-def extract_features(path):
-    y, sr = librosa.load(path, sr=SAMPLE_RATE, mono=True)
-    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=N_MFCC)
-    mfcc_mean = np.mean(mfcc.T, axis=0)  # 平均壓縮成固定長度特徵向量
-    return mfcc_mean
-
-print('Extracting features...')
-features = []
-labels = []
-splits = []
-for _, row in tqdm(df.iterrows(), total=len(df)):
-    feat = extract_features(row['path'])
-    features.append(feat)
-    labels.append(row['speaker'])
-    splits.append(row['split'])
-
-features = np.array(features)
-labels = np.array(labels)
-splits = np.array(splits)
-
-# === Step 3: Encode speaker labels ===
+# === 編碼語者標籤 ===
 le = LabelEncoder()
-encoded_labels = le.fit_transform(labels)
+y_encoded = le.fit_transform(y)
 
-# === Step 4: Split into train/eval/test ===
-X_train = features[splits == 'training_data']
-y_train = encoded_labels[splits == 'training_data']
+# === 根據 split 分割訓練和測試集 ===
+train_mask = splits == "training_data"
+X_train = X[train_mask]
+y_train = y_encoded[train_mask]
+X_test = X[~train_mask]
+y_test = y_encoded[~train_mask]
 
-X_eval = features[splits == 'eval_data']
-y_eval = encoded_labels[splits == 'eval_data']
-
-X_test = features[splits == 'testing_data']
-y_test = encoded_labels[splits == 'testing_data']
-
-# === Step 5: Grid Search K ===
-print('Searching best k...')
+# === 建立與評估 KNN 模型 ===
+# 測試不同的 K 值，k 從 1 到 20
 best_k = 1
-best_acc = 0
-for k in range(1, 11):
+best_accuracy = 0.0
+for k in range(1, 10):
     knn = KNeighborsClassifier(n_neighbors=k)
     knn.fit(X_train, y_train)
-    acc = knn.score(X_eval, y_eval)
-    print(f'k={k}, Eval Accuracy={acc:.4f}')
-    if acc > best_acc:
+    y_pred = knn.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    if accuracy > best_accuracy:
+        best_accuracy = accuracy
         best_k = k
-        best_acc = acc
+    print(f"Accuracy for k={k}: {accuracy:.4f}")
 
-# === Step 6: Retrain with best_k and test ===
-print(f'Best k = {best_k}, training final model...')
-final_knn = KNeighborsClassifier(n_neighbors=best_k)
-final_knn.fit(X_train, y_train)
+# === Step 6: Report ===
+# 選用最好的 k 來計算總體準確率
+print(f"Best k: {best_k}")
+knn = KNeighborsClassifier(n_neighbors=best_k)
+knn.fit(X_train, y_train)
+y_pred = knn.predict(X_test)
 
-print('Evaluating on test set...')
-y_pred = final_knn.predict(X_test)
-print(classification_report(y_test, y_pred, target_names=le.classes_))
+# 使用 zero_division=0 避免警告
+print("Classification Report:")
+print(classification_report(y_test, y_pred, target_names=le.classes_, zero_division=0))
 
-# 檢查類別分佈
-unique, counts = np.unique(labels[splits == 'testing_data'], return_counts=True)
-print("Test set class distribution:")
-for label, count in zip(unique, counts):
-    print(f"Class {label}: {count} samples")
+# 計算總體準確率
+overall_accuracy = accuracy_score(y_test, y_pred)
+print(f"Overall Accuracy: {overall_accuracy:.4f}")

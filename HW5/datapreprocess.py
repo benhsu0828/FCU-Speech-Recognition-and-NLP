@@ -5,104 +5,126 @@ import pandas as pd
 import soundfile as sf
 from tqdm import tqdm
 import random
+import pickle
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 # === Configurations ===
 SOURCE_DIR = "./Speaker Identification_Dataset-2021"
 TARGET_DIR = "./data"
 SAMPLE_RATE = 16000
-WINDOW_SIZE = SAMPLE_RATE  # 1 second
-OVERLAP = 0.4
-STEP_SIZE = int(WINDOW_SIZE * (1 - OVERLAP))
-VAD_THRESHOLD = 0.005
+N_MFCC = 13
+MFCC_HOP_LENGTH = 192
+MFCC_N_FFT = 512
 
 # === Create output directories ===
 os.makedirs(os.path.join(TARGET_DIR, "training_data"), exist_ok=True)
-os.makedirs(os.path.join(TARGET_DIR, "eval_data"), exist_ok=True)
 os.makedirs(os.path.join(TARGET_DIR, "testing_data"), exist_ok=True)
 
 # === Helper Functions ===
-def is_voiced(y, threshold=VAD_THRESHOLD):
-    energy = np.sum(y ** 2) / len(y)
-    return energy > threshold
+def normalize_audio(y):
+    """
+    將音頻信號正規化到 [-1, 1] 範圍。
+    """
+    return y / np.max(np.abs(y)) if np.max(np.abs(y)) > 0 else y
 
-def split_voiced_segments(y, top_db=20):
+def extract_mfcc_features(y, sr=SAMPLE_RATE, n_mfcc=N_MFCC):
     """
-    使用 librosa.effects.split 根據能量檢測語音活動區域。
-    :param y: 音頻信號
-    :param top_db: 靜音檢測的分貝閾值（越低越敏感）
-    :return: 語音活動區域的切片列表
+    提取 MFCC 特徵序列。
     """
-    intervals = librosa.effects.split(y, top_db=top_db)
-    return intervals
+    mfcc = librosa.feature.mfcc(
+        y=y,
+        sr=sr,
+        n_mfcc=n_mfcc,
+        hop_length=MFCC_HOP_LENGTH,
+        n_fft=MFCC_N_FFT
+    )
+    return mfcc.T  # shape: (frames, n_mfcc)
 
 # === Step 1: Collect file paths ===
 file_entries = []
-
-# 使用 os.walk 遍歷資料夾
 for root, dirs, files in os.walk(SOURCE_DIR):
     for file in files:
-        # 確保只處理 .wav 檔案
         if file.lower().endswith(".wav"):
-            # 獲取語者名稱（資料夾名稱）
             speaker = os.path.basename(root)
-            # 獲取完整檔案路徑
             file_path = os.path.join(root, file)
-            # 確保檔案存在
             if os.path.isfile(file_path):
                 file_entries.append((file_path, speaker))
 
-# 檢查是否成功收集所有檔案
 if not file_entries:
     print("No .wav files found in the dataset directory.")
 else:
     print(f"Total files collected: {len(file_entries)}")
 
-# === Step 2: Shuffle and Split ===
-random.shuffle(file_entries)
-n_total = len(file_entries)
-n_train = int(0.7 * n_total)
-n_eval = int(0.15 * n_total)
+# === Step 2: Shuffle and Split by Speaker ===
+# 將資料按語者分組
+speaker_groups = defaultdict(list)
+for file_path, speaker in file_entries:
+    speaker_groups[speaker].append(file_path)
 
+# 按語者分割資料
+train_entries = []
+test_entries = []
+
+for speaker, files in speaker_groups.items():
+    random.shuffle(files)  # 對每個語者的資料隨機打亂
+    n_total = len(files)
+    n_train = int(0.8 * n_total)  # 80% 用於訓練
+    train_entries.extend([(file, speaker) for file in files[:n_train]])
+    test_entries.extend([(file, speaker) for file in files[n_train:]])
+
+# 構建 splits 字典
 splits = {
-    "training_data": file_entries[:n_train],
-    "eval_data": file_entries[n_train:n_train + n_eval],
-    "testing_data": file_entries[n_train + n_eval:]
+    "training_data": train_entries,
+    "testing_data": test_entries
 }
 
-# === Step 3: Process Audio Files ===
-csv_entries = []
+print(f"Training data: {len(splits['training_data'])} files")
+print(f"Testing data: {len(splits['testing_data'])} files")
 
-for split_name, entries in splits.items():
-    split_dir = os.path.join(TARGET_DIR, split_name)
-    for file_path, speaker in tqdm(entries, desc=f"Processing {split_name}"):
-        try:
-            y, sr = librosa.load(file_path, sr=SAMPLE_RATE, mono=True)
-        except Exception as e:
-            print(f"Error reading {file_path}: {e}")
-            continue
-
-        # 使用 librosa.effects.split 檢測語音活動區域
-        intervals = split_voiced_segments(y)
-
-        segment_idx = 0
-        for start, end in intervals:
-            segment = y[start:end]
-            if len(segment) < WINDOW_SIZE:
-                segment = np.pad(segment, (0, WINDOW_SIZE - len(segment)))
-
-            segment_filename = f"{speaker}_{start}_seg{segment_idx}.wav"
-            segment_path = os.path.join(split_dir, segment_filename)
-            sf.write(segment_path, segment, SAMPLE_RATE)
-            csv_entries.append({
-                "path": segment_path,
+# === Step 3: Process and Extract Features ===
+def process_file(entry):
+    file_path, speaker = entry
+    try:
+        y, sr = librosa.load(file_path, sr=SAMPLE_RATE, mono=True)
+        y = normalize_audio(y)
+        mfcc_feat = extract_mfcc_features(y)
+        frames = []
+        for frame_idx, frame in enumerate(mfcc_feat):
+            frame_filename = f"{speaker}_frame{frame_idx}.npy"
+            frame_path = os.path.join(TARGET_DIR, "training_data" if entry in splits["training_data"] else "testing_data", frame_filename)
+            np.save(frame_path, frame)
+            frames.append({
+                "path": frame_path,
                 "speaker": speaker,
-                "split": split_name
+                "split": "training_data" if entry in splits["training_data"] else "testing_data"
             })
-            segment_idx += 1
+        return frames
+    except Exception as e:
+        print(f"Error processing {file_path}: {e}")
+        return []
 
+# 使用多線程處理音檔
+with ThreadPoolExecutor() as executor:
+    results = list(tqdm(executor.map(process_file, splits["training_data"] + splits["testing_data"]), total=len(splits["training_data"]) + len(splits["testing_data"])))
+
+# 展平結果
+csv_entries = [item for sublist in results for item in sublist]
 
 # === Step 4: Save Metadata ===
 df = pd.DataFrame(csv_entries)
-df.to_csv(os.path.join(TARGET_DIR, "metadata.csv"), index=False)
+df.to_csv(os.path.join(TARGET_DIR, "mfcc_metadata.csv"), index=False)
 
-print("Audio processing complete. Segments saved with metadata.csv.")
+print("Feature extraction complete. Frames and metadata saved.")
+print(f"Metadata saved to {os.path.join(TARGET_DIR, 'mfcc_metadata.csv')}")
+print(f"Training data: {len(splits['training_data'])} files")
+print(f"Testing data: {len(splits['testing_data'])} files")
+
+# === Step 5: Save Features and Labels ===
+features = np.array([np.load(entry["path"]) for entry in csv_entries])  # 加載所有特徵
+labels = np.array([entry["speaker"] for entry in csv_entries])  # 加載所有標籤
+split_labels = np.array([entry["split"] for entry in csv_entries])  # 加載所有分割標籤
+
+# 保存到 .npz 文件
+np.savez(os.path.join(TARGET_DIR, "mfcc_data.npz"), features=features, labels=labels, splits=split_labels)
+print(f"Features and labels saved to {os.path.join(TARGET_DIR, 'mfcc_data.npz')}")
