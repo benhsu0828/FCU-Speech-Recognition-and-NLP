@@ -1,0 +1,11 @@
+# FUC-Speech-Recognition-and-NLP
+ 逢甲大學 資訊碩二Speech Recognition and Natural Language Processing
+HW5
+
+conda create --name FCU-SLP_HW5 python=3.7
+conda activate FCU-SLP
+pip install -r requirements.txt
+pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1+cu117 -f https://download.pytorch.org/whl/torch_stable.html
+
+
+pip freeze > requirements.txt
